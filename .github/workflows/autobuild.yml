@@ -352,6 +352,77 @@ jobs:
         with:
           name: mkxp-z.linux.ubuntu.22.04.x86_64.${{github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name}}-${{steps.short-sha.outputs.sha}}
           path: build/artifact
+          
+  build-linux-i386:
+    name: Ubuntu 22.04 i386
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: benjlevesque/short-sha@v2.2
+        id: short-sha
+        with:
+          length: 7
+  
+      - name: Install dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt update
+          sudo apt install -y git diffutils ruby bison gcc-multilib g++-multilib ccache make cmake ninja-build python3-pip
+          pip3 install meson
+  
+      - name: Checkout repository
+        uses: actions/checkout@v5
+  
+      - name: Restore from cache
+        if: true
+        uses: actions/cache/restore@v5
+        with:
+          path: ccache
+          key: ubuntu-jammy-i386-
+          restore-keys: ubuntu-jammy-i386-
+  
+      - name: Set up ccache
+        run: |
+          ccache --set-config=cache_dir="$(pwd)/ccache"
+          ccache --set-config=compiler_check=content
+          ccache --set-config=max_size=1280MiB
+          ccache --zero-stats
+  
+      - name: Configure
+        run: |
+          meson setup --prefix "$(realpath .)/build/artifact" --buildtype release -Dstrip=true -Db_lto=true build
+  
+      - name: Build
+        id: build
+        run: |
+          exit_code=0
+          CLICOLOR_FORCE=1 ninja -C build -v || exit_code=$?
+          echo exit-code=$exit_code >> "$GITHUB_OUTPUT"
+          date -u +time=%Y-%m-%dT%H:%M:%SZ >> "$GITHUB_OUTPUT"
+  
+      - name: Save to cache
+        if: true
+        uses: actions/cache/save@v5
+        with:
+          path: ccache
+          key: ubuntu-jammy-i386-${{ github.sha }}-${{ steps.build.outputs.time }}
+  
+      - name: Show ccache statistics
+        run: |
+          ccache --show-stats --verbose
+  
+      - name: Check build status
+        run: |
+          exit ${{ steps.build.outputs.exit-code }}
+  
+      - name: Prepare artifact
+        run: |
+          meson install -C build --no-rebuild --tags mkxp-z
+  
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mkxp-z.linux.ubuntu.22.04.i386.${{github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name}}-${{steps.short-sha.outputs.sha}}
+          path: build/artifact
 
   build-linux-cross:
     name: Ubuntu 22.04 ${{matrix.arch_mkxpz}}
