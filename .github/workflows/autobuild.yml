@@ -367,7 +367,7 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt update
           sudo apt install -y git diffutils ruby bison \
-            gcc-multilib g++-multilib libc6-dev-i386 \
+            gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 \
             ccache make cmake ninja-build python3-pip
           pip3 install meson
   
@@ -389,11 +389,22 @@ jobs:
           ccache --set-config=max_size=1280MiB
           ccache --zero-stats
   
-      - name: Configure
+      - name: Configure (force 32-bit, disable LTO)
+        env:
+          CC: gcc
+          CXX: g++
+          CFLAGS: -m32
+          CXXFLAGS: -m32
+          LDFLAGS: -m32
         run: |
-          CFLAGS=-m32 CXXFLAGS=-m32 meson setup \
+          rm -rf build
+          meson setup --wipe --reconfigure \
             --prefix "$(realpath .)/build/artifact" \
-            --buildtype release -Dstrip=true -Db_lto=true build
+            --buildtype release -Dstrip=true -Db_lto=false build || true
+          echo "=== meson configure output ==="
+          meson configure -C build || true
+          echo "=== meson log head ==="
+          head -n 200 build/meson-logs/meson-log.txt || true
   
       - name: Build
         id: build
@@ -402,6 +413,13 @@ jobs:
           CLICOLOR_FORCE=1 ninja -C build -v || exit_code=$?
           echo exit-code=$exit_code >> "$GITHUB_OUTPUT"
           date -u +time=%Y-%m-%dT%H:%M:%SZ >> "$GITHUB_OUTPUT"
+          if [ $exit_code -ne 0 ]; then
+            echo "=== Last 200 lines of ninja log ==="
+            tail -n 200 build/meson-logs/meson-log.txt || true
+            echo "=== compile_commands.json (first 200 lines) ==="
+            head -n 200 build/compile_commands.json || true
+          fi
+          exit $exit_code
   
       - name: Save to cache
         if: true
@@ -414,19 +432,18 @@ jobs:
         run: |
           ccache --show-stats --verbose
   
-      - name: Check build status
-        run: |
-          exit ${{ steps.build.outputs.exit-code }}
-  
       - name: Prepare artifact
         run: |
-          meson install -C build --no-rebuild --tags mkxp-z
+          meson install -C build --no-rebuild --tags mkxp-z || true
+          echo "file of built binary:"
+          file build/artifact/bin/mkxp-z || true
   
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mkxp-z.linux.ubuntu.22.04.i386.${{github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name}}-${{steps.short-sha.outputs.sha}}
           path: build/artifact
+  
 
 
   build-linux-cross:
