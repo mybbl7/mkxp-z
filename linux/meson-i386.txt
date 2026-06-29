@@ -1,0 +1,22 @@
+[binaries]
+c = ['ccache', 'i686-linux-gnu-gcc']
+cpp = ['ccache', 'i686-linux-gnu-g++']
+ar = 'i686-linux-gnu-ar'
+ranlib = 'i686-linux-gnu-ranlib'
+strip = 'i686-linux-gnu-strip'
+pkgconfig = 'pkg-config'
+cmake = 'cmake'
+ld = 'i686-linux-gnu-ld'
+
+[properties]
+needs_exe_wrapper = true
+c_args = ['-m32']
+cpp_args = ['-m32']
+c_link_args = ['-m32']
+cpp_link_args = ['-m32']
+
+[host_machine]
+system = 'linux'
+cpu_family = 'x86'
+cpu = 'i386'
+endian = 'little'
