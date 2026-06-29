@@ -117,13 +117,13 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
-  
+      
           # Repair apt state and refresh lists
           sudo apt-get -y --fix-broken install || true
           sudo apt-get update
-  
-          # Add ports repos for non-amd64 architectures and add architecture
-          if [ "${{ matrix.arch_debian }}" != "amd64" ]; then
+      
+          # Add target architecture and ports repos only for non-amd64 cross targets
+          if [ "${{ matrix.arch_debian }}" != "amd64" ] && [ "${{ matrix.arch_debian }}" != "i386" ]; then
             sudo sed -i "s/^deb /deb [arch=amd64] /g" /etc/apt/sources.list || true
             echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy main restricted" | sudo tee -a /etc/apt/sources.list
             echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy-updates main restricted" | sudo tee -a /etc/apt/sources.list
@@ -135,27 +135,34 @@ jobs:
             sudo apt-get update
             sudo dpkg --add-architecture ${{ matrix.arch_debian }} || true
             sudo apt-get update
+          else
+            # For i386 and amd64, just register the architecture (no ports entries)
+            if [ "${{ matrix.arch_debian }}" = "i386" ]; then
+              sudo dpkg --add-architecture i386 || true
+              sudo apt-get update
+            fi
           fi
-  
+      
           # Core build tools
           sudo apt-get install -y --no-install-recommends \
             git diffutils ruby bison ccache make cmake ninja-build python3-pip || true
-  
+      
           # Install meson via pip (user) and ensure it's on PATH
           pip3 install --user meson
           export PATH="$HOME/.local/bin:$PATH"
           meson --version || true
-  
+      
           # Native compilers
           sudo apt-get install -y --no-install-recommends gcc g++ || true
-  
-          # Cross compilers for matrix arch (i686-linux-gnu for i386)
+      
+          # Install cross compilers for the matrix arch (i686-linux-gnu for i386)
           sudo apt-get install -y --no-install-recommends gcc-${{ matrix.arch_gcc }} g++-${{ matrix.arch_gcc }} || true
-  
-          # Additional multilib packages for i386 (best-effort)
+      
+          # If target is i386, also install multilib support (best-effort)
           if [ "${{ matrix.arch_mkxpz }}" = "i386" ]; then
             sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 || true
           fi
+
   
       - name: Checkout repository
         uses: actions/checkout@v5
