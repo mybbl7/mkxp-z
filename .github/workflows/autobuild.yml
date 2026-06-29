@@ -229,9 +229,30 @@ jobs:
         run: |
           ccache --show-stats --verbose
   
-      - name: Check build status
+      - name: Check build status and show logs
         run: |
-          exit ${{ steps.build.outputs.exit-code }}
+          BUILD_EXIT=${{ steps.build.outputs.exit-code }}
+          echo "Build exit code: $BUILD_EXIT"
+          echo "=== Meson configure summary ==="
+          meson configure -C build || true
+          echo "=== Head of meson log ==="
+          head -n 200 build/meson-logs/meson-log.txt || true
+          echo "=== Last 200 lines of meson log ==="
+          tail -n 200 build/meson-logs/meson-log.txt || true
+          echo "=== Ninja verbose output (if present) ==="
+          if [ -f build/meson-logs/ninja-log.txt ]; then
+            tail -n 200 build/meson-logs/ninja-log.txt || true
+          else
+            echo "ninja-log.txt not found; showing ninja -v output from build directory (last 200 lines if available)"
+            # If ninja produced verbose output to stderr, try to show the last commands recorded by ninja
+            ninja -C build -v -n || true
+          fi
+          echo "=== Show failing compiler commands (grep for error lines) ==="
+          grep -nE "error:|undefined reference|ld: " build/meson-logs/meson-log.txt || true
+          echo "=== End diagnostics ==="
+          # Propagate the original build exit code so CI still fails
+          exit $BUILD_EXIT
+
   
       - name: Prepare artifact
         run: |
