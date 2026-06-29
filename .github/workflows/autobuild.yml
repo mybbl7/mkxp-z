@@ -88,6 +88,7 @@ jobs:
           sudo apt update
           sudo apt install -y git diffutils ruby bison \
             gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 \
+            libstdc++-11-dev:i386 libgcc-11-dev:i386 \
             ccache make cmake ninja-build python3-pip
           pip3 install meson
   
@@ -109,29 +110,32 @@ jobs:
           ccache --set-config=max_size=1280MiB
           ccache --zero-stats
   
-      - name: Create 32-bit compiler wrappers and export env
+      - name: Create gcc/g++ wrappers and prepend PATH
         run: |
-          # Create wrappers that always add -m32 so Meson and CMake subprojects compile 32-bit objects
-          cat > ./gcc32 <<'EOF'
+          # Create wrappers named gcc and g++ that always add -m32
+          cat > ./gcc <<'EOF'
           #!/usr/bin/env bash
           exec /usr/bin/gcc -m32 "$@"
           EOF
-          cat > ./gxx32 <<'EOF'
+          cat > ./g++ <<'EOF'
           #!/usr/bin/env bash
           exec /usr/bin/g++ -m32 "$@"
           EOF
-          chmod +x ./gcc32 ./gxx32
-          echo "Wrappers created at $(pwd)/gcc32 and $(pwd)/gxx32"
+          chmod +x ./gcc ./g++
+          # Ensure wrappers are used first
+          echo "Wrapper path: $(pwd)"
+          which gcc || true
+          ls -l ./gcc ./g++ || true
   
       - name: Configure (force 32-bit, disable LTO, show meson logs)
         env:
-          CC: ${{ github.workspace }}/gcc32
-          CXX: ${{ github.workspace }}/gxx32
+          PATH: ${{ github.workspace }}:${{ env.PATH }}
+          CC: gcc
+          CXX: g++
           CFLAGS: -m32
           CXXFLAGS: -m32
           LDFLAGS: -m32
         run: |
-          # Ensure a clean reconfigure so Meson/CMake re-probe compilers with wrappers
           rm -rf build
           meson setup --wipe --reconfigure \
             --prefix "$(realpath .)/build/artifact" \
@@ -140,6 +144,8 @@ jobs:
           meson configure -C build || true
           echo "=== head of meson log ==="
           head -n 200 build/meson-logs/meson-log.txt || true
+          echo "which gcc; gcc --version"
+          which gcc; gcc --version || true
   
       - name: Build
         id: build
@@ -151,7 +157,7 @@ jobs:
           if [ $exit_code -ne 0 ]; then
             echo "=== Last 200 lines of meson log ==="
             tail -n 200 build/meson-logs/meson-log.txt || true
-            echo "=== Last 200 lines of ninja verbose output (if available) ==="
+            echo "=== Last 200 lines of ninja output (if available) ==="
             tail -n 200 build/meson-logs/ninja-log.txt || true
           fi
           exit $exit_code
@@ -169,7 +175,6 @@ jobs:
   
       - name: Prepare artifact
         run: |
-          # Attempt install; keep going to capture file type even if install fails
           meson install -C build --no-rebuild --tags mkxp-z || true
           echo "Built binary file type (if present):"
           file build/artifact/bin/mkxp-z || true
@@ -179,6 +184,7 @@ jobs:
         with:
           name: mkxp-z.linux.ubuntu.22.04.i386.${{github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name}}-${{steps.short-sha.outputs.sha}}
           path: build/artifact
+
   
 
 
