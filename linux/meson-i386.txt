@@ -1,12 +1,12 @@
 [binaries]
-c = ['ccache', 'i686-linux-gnu-gcc']
-cpp = ['ccache', 'i686-linux-gnu-g++']
-ar = 'i686-linux-gnu-ar'
-ranlib = 'i686-linux-gnu-ranlib'
-strip = 'i686-linux-gnu-strip'
+c = ['ccache', '/usr/bin/i686-linux-gnu-gcc']
+cpp = ['ccache', '/usr/bin/i686-linux-gnu-g++']
+ar = '/usr/bin/i686-linux-gnu-ar'
+ranlib = '/usr/bin/i686-linux-gnu-ranlib'
+strip = '/usr/bin/i686-linux-gnu-strip'
 pkgconfig = 'pkg-config'
 cmake = 'cmake'
-ld = 'i686-linux-gnu-ld'
+ld = '/usr/bin/i686-linux-gnu-ld'
 
 [properties]
 needs_exe_wrapper = true
