@@ -161,6 +161,14 @@ jobs:
           # If target is i386, also install multilib support (best-effort)
           if [ "${{ matrix.arch_mkxpz }}" = "i386" ]; then
             sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 || true
+            
+            # Install i686 cross toolchain and supporting tools
+            sudo apt-get install -y --no-install-recommends \
+              gcc-i686-linux-gnu g++-i686-linux-gnu binutils-multiarch ccache pkg-config || true
+            
+            # Verify the compiler is available
+            which i686-linux-gnu-gcc || true
+            i686-linux-gnu-gcc --version || true
           fi
 
   
