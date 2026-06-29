@@ -72,72 +72,101 @@ jobs:
               exit 1
             fi
           '
-  build-linux-i386:
-    name: Ubuntu 22.04 i386
+  build-linux-cross:
+    name: Ubuntu 22.04 ${{ matrix.arch_mkxpz }}
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch_mkxpz: armv6
+            arch_debian: armhf
+            arch_gcc: arm-linux-gnueabihf
+            cache: false
+          - arch_mkxpz: armv7-neon
+            arch_debian: armhf
+            arch_gcc: arm-linux-gnueabihf
+            cache: false
+          - arch_mkxpz: arm64
+            arch_debian: arm64
+            arch_gcc: aarch64-linux-gnu
+            cache: true
+          - arch_mkxpz: power8le
+            arch_debian: ppc64el
+            arch_gcc: powerpc64le-linux-gnu
+            cache: false
+          - arch_mkxpz: s390x
+            arch_debian: s390x
+            arch_gcc: s390x-linux-gnu
+            cache: false
+          - arch_mkxpz: riscv64
+            arch_debian: riscv64
+            arch_gcc: riscv64-linux-gnu
+            cache: false
+          - arch_mkxpz: i386
+            arch_debian: i386
+            arch_gcc: i686-linux-gnu
+            cache: true
+  
     steps:
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
         with:
           length: 7
   
-      - name: Install dependencies (robust)
+      - name: Install dependencies
         run: |
           set -euo pipefail
   
-          # Repair any broken state and refresh lists
+          # Repair apt state and refresh lists
           sudo apt-get -y --fix-broken install || true
           sudo apt-get update
   
-          # Add i386 architecture
-          sudo dpkg --add-architecture i386 || true
-          sudo apt-get update
+          # Add ports repos for non-amd64 architectures and add architecture
+          if [ "${{ matrix.arch_debian }}" != "amd64" ]; then
+            sudo sed -i "s/^deb /deb [arch=amd64] /g" /etc/apt/sources.list || true
+            echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy main restricted" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy-updates main restricted" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy universe" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy-updates universe" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy multiverse" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy-updates multiverse" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+            sudo apt-get update
+            sudo dpkg --add-architecture ${{ matrix.arch_debian }} || true
+            sudo apt-get update
+          fi
   
-          # Basic build tools and multilib support
+          # Core build tools
           sudo apt-get install -y --no-install-recommends \
-            git diffutils ruby bison \
-            gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 \
-            ccache make ninja-build python3-pip || true
+            git diffutils ruby bison ccache make cmake ninja-build python3-pip || true
   
-          # Try to install matching libstdc++ dev for i386 (GCC major version)
-          GCC_VER=$(gcc -dumpversion | cut -d. -f1 || echo "")
-          if [ -n "$GCC_VER" ] && apt-cache policy "libstdc++-${GCC_VER}-dev:i386" | grep -q 'Candidate:'; then
-            sudo apt-get install -y --no-install-recommends "libstdc++-${GCC_VER}-dev:i386" "libgcc-${GCC_VER}-dev:i386" || true
-          elif apt-cache policy libstdc++-dev:i386 | grep -q 'Candidate:'; then
-            sudo apt-get install -y --no-install-recommends libstdc++-dev:i386 || true
-          else
-            echo "libstdc++-dev:i386 not available; continuing and relying on available headers"
-          fi
-  
-          # Try libc++ packages if available (may not exist on runner)
-          if apt-cache policy libc++-dev:i386 | grep -q 'Candidate:'; then
-            sudo apt-get install -y --no-install-recommends libc++-dev:i386 libc++abi-dev:i386 || true
-          else
-            echo "libc++-dev:i386 not available; using libstdc++"
-          fi
-  
-          # Install cmake only if apt can satisfy deps; otherwise rely on system cmake or meson subprojects
-          if apt-cache policy cmake | grep -q 'Candidate:'; then
-            sudo apt-get install -y --no-install-recommends cmake || true
-          else
-            echo "apt cmake not installed; continuing"
-          fi
-  
-          # Ensure meson is available via pip user install
+          # Install meson via pip (user) and ensure it's on PATH
           pip3 install --user meson
           export PATH="$HOME/.local/bin:$PATH"
           meson --version || true
+  
+          # Native compilers
+          sudo apt-get install -y --no-install-recommends gcc g++ || true
+  
+          # Cross compilers for matrix arch (i686-linux-gnu for i386)
+          sudo apt-get install -y --no-install-recommends gcc-${{ matrix.arch_gcc }} g++-${{ matrix.arch_gcc }} || true
+  
+          # Additional multilib packages for i386 (best-effort)
+          if [ "${{ matrix.arch_mkxpz }}" = "i386" ]; then
+            sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 || true
+          fi
   
       - name: Checkout repository
         uses: actions/checkout@v5
   
       - name: Restore from cache
-        if: true
+        if: ${{ matrix.cache }}
         uses: actions/cache/restore@v5
         with:
           path: ccache
-          key: ubuntu-jammy-i386-
-          restore-keys: ubuntu-jammy-i386-
+          key: ubuntu-jammy-${{ matrix.arch_mkxpz }}-
+          restore-keys: ubuntu-jammy-${{ matrix.arch_mkxpz }}-
   
       - name: Set up ccache
         run: |
@@ -146,54 +175,25 @@ jobs:
           ccache --set-config=max_size=1280MiB
           ccache --zero-stats
   
-      - name: Create gcc g++ wrappers and verify
+      - name: Configure
         run: |
-          # Create wrappers named gcc and g++ that always add -m32
-          cat > ./gcc <<'EOF'
-          #!/usr/bin/env bash
-          exec /usr/bin/gcc -m32 "$@"
-          EOF
-          cat > ./g++ <<'EOF'
-          #!/usr/bin/env bash
-          exec /usr/bin/g++ -m32 "$@"
-          EOF
-          chmod +x ./gcc ./g++
-          echo "Wrapper files created:"
-          ls -l ./gcc ./g++ || true
+          set -euo pipefail
   
-      - name: Configure force 32-bit and use libstdc++
-        env:
-          CC: gcc
-          CXX: g++
-          CFLAGS: -m32
-          CXXFLAGS: -m32
-          LDFLAGS: -m32
-        run: |
-          # Prepend workspace to PATH for this shell only so wrappers are found first
-          export PATH="$(pwd):$PATH"
-          export PATH="$HOME/.local/bin:$PATH"
-          echo "PATH=$PATH"
-          echo "which gcc; which g++; which rm"
-          which gcc || true
-          which g++ || true
-          which rm || true
+          if [ '${{ matrix.arch_mkxpz }}' = 'armv7-neon' ]; then
+            arm_neon=auto
+          else
+            arm_neon=disabled
+          fi
   
-          # Clean and reconfigure; disable LTO for multilib builds and force gnu++ standard library
-          rm -rf build
-          meson setup --wipe --reconfigure \
-            --prefix "$(realpath .)/build/artifact" \
-            --buildtype release -Dstrip=true -Db_lto=false -Dcpp_std=gnu++17 build || true
-  
-          echo "=== meson configure summary ==="
-          meson configure -C build || true
-  
-          echo "=== head of meson log ==="
-          head -n 200 build/meson-logs/meson-log.txt || true
-  
-          echo "=== quick compile test (small C++ file) ==="
-          echo '#include <iostream>
-          int main(){ std::cout << \"ok\\n\"; return 0; }' > /tmp/test.cpp
-          g++ -m32 -c /tmp/test.cpp -o /tmp/test.o && file /tmp/test.o || true
+          if [ '${{ matrix.arch_mkxpz }}' = 'i386' ]; then
+            meson setup --prefix "$(realpath .)/build/artifact" \
+              --cross-file linux/meson-i386.txt \
+              --buildtype release -Dstrip=true -Db_lto=false -Dcpp_std=gnu++17 build
+          else
+            meson setup --prefix "$(realpath .)/build/artifact" \
+              --cross-file linux/meson-${{ matrix.arch_mkxpz }}.txt \
+              -Darm_neon=$arm_neon --buildtype release -Dstrip=true -Db_lto=true build
+          fi
   
       - name: Build
         id: build
@@ -202,35 +202,29 @@ jobs:
           CLICOLOR_FORCE=1 ninja -C build -v || exit_code=$?
           echo exit-code=$exit_code >> "$GITHUB_OUTPUT"
           date -u +time=%Y-%m-%dT%H:%M:%SZ >> "$GITHUB_OUTPUT"
-          if [ $exit_code -ne 0 ]; then
-            echo "=== Last 200 lines of meson log ==="
-            tail -n 200 build/meson-logs/meson-log.txt || true
-            echo "=== Ninja verbose output (if available) ==="
-            if [ -f build/meson-logs/ninja-log.txt ]; then
-              tail -n 200 build/meson-logs/ninja-log.txt || true
-            fi
-          fi
-          exit $exit_code
   
       - name: Save to cache
-        if: true
+        if: ${{ matrix.cache }}
         uses: actions/cache/save@v5
         with:
           path: ccache
-          key: ubuntu-jammy-i386-${{ github.sha }}-${{ steps.build.outputs.time }}
+          key: ubuntu-jammy-${{ matrix.arch_mkxpz }}-${{ github.sha }}-${{ steps.build.outputs.time }}
   
       - name: Show ccache statistics
         run: |
           ccache --show-stats --verbose
   
+      - name: Check build status
+        run: |
+          exit ${{ steps.build.outputs.exit-code }}
+  
       - name: Prepare artifact
         run: |
-          meson install -C build --no-rebuild --tags mkxp-z || true
-          echo "Built binary file type (if present):"
-          file build/artifact/bin/mkxp-z || true
+          meson install -C build --no-rebuild --tags mkxp-z
   
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mkxp-z.linux.ubuntu.22.04.i386.${{github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name}}-${{steps.short-sha.outputs.sha}}
+          name: mkxp-z.linux.ubuntu.22.04.${{ matrix.arch_mkxpz }}.${{ github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name }}-${{ steps.short-sha.outputs.sha }}
           path: build/artifact
+
