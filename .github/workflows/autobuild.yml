@@ -129,13 +129,14 @@ jobs:
   
       - name: Configure (force 32-bit, disable LTO, show meson logs)
         env:
-          PATH: ${{ github.workspace }}:${{ env.PATH }}
           CC: gcc
           CXX: g++
           CFLAGS: -m32
           CXXFLAGS: -m32
           LDFLAGS: -m32
         run: |
+          # Prepend workspace to PATH for this shell only
+          export PATH="$(pwd):$PATH"
           rm -rf build
           meson setup --wipe --reconfigure \
             --prefix "$(realpath .)/build/artifact" \
@@ -144,8 +145,10 @@ jobs:
           meson configure -C build || true
           echo "=== head of meson log ==="
           head -n 200 build/meson-logs/meson-log.txt || true
-          echo "which gcc; gcc --version"
+          echo "which gcc; gcc --version; which rm; rm --version"
           which gcc; gcc --version || true
+          which rm; rm --version || true
+
   
       - name: Build
         id: build
