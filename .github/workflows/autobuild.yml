@@ -72,7 +72,6 @@ jobs:
               exit 1
             fi
           '
-
   build-linux-i386:
     name: Ubuntu 22.04 i386
     runs-on: ubuntu-22.04
@@ -85,51 +84,49 @@ jobs:
       - name: Install dependencies (robust)
         run: |
           set -euo pipefail
-      
+  
           # Repair any broken state and refresh lists
           sudo apt-get -y --fix-broken install || true
           sudo apt-get update
-      
-          # Basic packages
+  
+          # Add i386 architecture
+          sudo dpkg --add-architecture i386 || true
+          sudo apt-get update
+  
+          # Basic build tools and multilib support
           sudo apt-get install -y --no-install-recommends \
-            git diffutils ruby bison gcc-multilib g++-multilib \
-            libc6-dev-i386 lib32stdc++6 ccache make ninja-build python3-pip || true
-      
-          # Determine host GCC major version (e.g., 11)
+            git diffutils ruby bison \
+            gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 \
+            ccache make ninja-build python3-pip || true
+  
+          # Try to install matching libstdc++ dev for i386 (GCC major version)
           GCC_VER=$(gcc -dumpversion | cut -d. -f1 || echo "")
-          echo "Detected GCC major version: $GCC_VER"
-      
-          # Try to install matching libstdc++ dev for i386
-          if apt-cache policy "libstdc++-${GCC_VER}-dev:i386" | grep -q 'Candidate:'; then
+          if [ -n "$GCC_VER" ] && apt-cache policy "libstdc++-${GCC_VER}-dev:i386" | grep -q 'Candidate:'; then
             sudo apt-get install -y --no-install-recommends "libstdc++-${GCC_VER}-dev:i386" "libgcc-${GCC_VER}-dev:i386" || true
+          elif apt-cache policy libstdc++-dev:i386 | grep -q 'Candidate:'; then
+            sudo apt-get install -y --no-install-recommends libstdc++-dev:i386 || true
           else
-            # Try generic libstdc++ dev package name
-            if apt-cache policy libstdc++-dev:i386 | grep -q 'Candidate:'; then
-              sudo apt-get install -y --no-install-recommends libstdc++-dev:i386 || true
-            else
-              echo "libstdc++-dev:i386 not available from apt; continuing without it"
-            fi
+            echo "libstdc++-dev:i386 not available; continuing and relying on available headers"
           fi
-      
-          # Try libc++ packages if available (not always present on Ubuntu apt for i386)
+  
+          # Try libc++ packages if available (may not exist on runner)
           if apt-cache policy libc++-dev:i386 | grep -q 'Candidate:'; then
             sudo apt-get install -y --no-install-recommends libc++-dev:i386 libc++abi-dev:i386 || true
           else
-            echo "libc++-dev:i386 not available; relying on libstdc++ for C++ headers"
+            echo "libc++-dev:i386 not available; using libstdc++"
           fi
-      
-          # Install cmake from apt only if its deps are satisfiable; otherwise install pip meson and use preinstalled cmake
+  
+          # Install cmake only if apt can satisfy deps; otherwise rely on system cmake or meson subprojects
           if apt-cache policy cmake | grep -q 'Candidate:'; then
             sudo apt-get install -y --no-install-recommends cmake || true
           else
-            echo "cmake candidate not available; skipping apt cmake install"
+            echo "apt cmake not installed; continuing"
           fi
-      
-          # Ensure meson is available (user pip install)
+  
+          # Ensure meson is available via pip user install
           pip3 install --user meson
           export PATH="$HOME/.local/bin:$PATH"
           meson --version || true
-
   
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -149,7 +146,7 @@ jobs:
           ccache --set-config=max_size=1280MiB
           ccache --zero-stats
   
-      - name: Create gcc/g++ wrappers and verify PATH
+      - name: Create gcc g++ wrappers and verify
         run: |
           # Create wrappers named gcc and g++ that always add -m32
           cat > ./gcc <<'EOF'
@@ -163,9 +160,8 @@ jobs:
           chmod +x ./gcc ./g++
           echo "Wrapper files created:"
           ls -l ./gcc ./g++ || true
-          echo "Workspace path: $(pwd)"
   
-      - name: Configure (force 32-bit, disable LTO, show meson logs)
+      - name: Configure force 32-bit and use libstdc++
         env:
           CC: gcc
           CXX: g++
@@ -175,19 +171,18 @@ jobs:
         run: |
           # Prepend workspace to PATH for this shell only so wrappers are found first
           export PATH="$(pwd):$PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           echo "PATH=$PATH"
           echo "which gcc; which g++; which rm"
           which gcc || true
           which g++ || true
           which rm || true
   
-          # Clean and reconfigure; disable LTO for multilib builds
+          # Clean and reconfigure; disable LTO for multilib builds and force gnu++ standard library
           rm -rf build
-          # Ensure meson from pip user install is available
-          export PATH="$HOME/.local/bin:$PATH"
           meson setup --wipe --reconfigure \
             --prefix "$(realpath .)/build/artifact" \
-            --buildtype release -Dstrip=true -Db_lto=false build || true
+            --buildtype release -Dstrip=true -Db_lto=false -Dcpp_std=gnu++17 build || true
   
           echo "=== meson configure summary ==="
           meson configure -C build || true
@@ -199,7 +194,6 @@ jobs:
           echo '#include <iostream>
           int main(){ std::cout << \"ok\\n\"; return 0; }' > /tmp/test.cpp
           g++ -m32 -c /tmp/test.cpp -o /tmp/test.o && file /tmp/test.o || true
-          echo "=== end configure step ==="
   
       - name: Build
         id: build
@@ -211,8 +205,7 @@ jobs:
           if [ $exit_code -ne 0 ]; then
             echo "=== Last 200 lines of meson log ==="
             tail -n 200 build/meson-logs/meson-log.txt || true
-            echo "=== Ninja verbose output (last 200 lines) ==="
-            # ninja log file may not exist; show ninja stderr from build dir if present
+            echo "=== Ninja verbose output (if available) ==="
             if [ -f build/meson-logs/ninja-log.txt ]; then
               tail -n 200 build/meson-logs/ninja-log.txt || true
             fi
@@ -241,4 +234,3 @@ jobs:
         with:
           name: mkxp-z.linux.ubuntu.22.04.i386.${{github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name}}-${{steps.short-sha.outputs.sha}}
           path: build/artifact
-
