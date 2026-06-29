@@ -366,7 +366,9 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt update
-          sudo apt install -y git diffutils ruby bison gcc-multilib g++-multilib ccache make cmake ninja-build python3-pip
+          sudo apt install -y git diffutils ruby bison \
+            gcc-multilib g++-multilib libc6-dev-i386 \
+            ccache make cmake ninja-build python3-pip
           pip3 install meson
   
       - name: Checkout repository
@@ -389,7 +391,9 @@ jobs:
   
       - name: Configure
         run: |
-          meson setup --prefix "$(realpath .)/build/artifact" --buildtype release -Dstrip=true -Db_lto=true build
+          CFLAGS=-m32 CXXFLAGS=-m32 meson setup \
+            --prefix "$(realpath .)/build/artifact" \
+            --buildtype release -Dstrip=true -Db_lto=true build
   
       - name: Build
         id: build
@@ -423,6 +427,7 @@ jobs:
         with:
           name: mkxp-z.linux.ubuntu.22.04.i386.${{github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name}}-${{steps.short-sha.outputs.sha}}
           path: build/artifact
+
 
   build-linux-cross:
     name: Ubuntu 22.04 ${{matrix.arch_mkxpz}}
