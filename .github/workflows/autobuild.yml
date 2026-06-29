@@ -82,21 +82,54 @@ jobs:
         with:
           length: 7
   
-      - name: Install dependencies
+      - name: Install dependencies (robust)
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt update
-          sudo apt install -y \
-            git diffutils ruby bison \
-            gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 \
-            libstdc++-11-dev:i386 libgcc-11-dev:i386 || true
-          # Try to install libc++ dev packages if available (some runners may not have them)
-          sudo apt install -y libc++-dev:i386 libc++abi-dev:i386 || true
-          sudo apt install -y ccache make cmake ninja-build python3-pip
+          set -euo pipefail
+      
+          # Repair any broken state and refresh lists
+          sudo apt-get -y --fix-broken install || true
+          sudo apt-get update
+      
+          # Basic packages
+          sudo apt-get install -y --no-install-recommends \
+            git diffutils ruby bison gcc-multilib g++-multilib \
+            libc6-dev-i386 lib32stdc++6 ccache make ninja-build python3-pip || true
+      
+          # Determine host GCC major version (e.g., 11)
+          GCC_VER=$(gcc -dumpversion | cut -d. -f1 || echo "")
+          echo "Detected GCC major version: $GCC_VER"
+      
+          # Try to install matching libstdc++ dev for i386
+          if apt-cache policy "libstdc++-${GCC_VER}-dev:i386" | grep -q 'Candidate:'; then
+            sudo apt-get install -y --no-install-recommends "libstdc++-${GCC_VER}-dev:i386" "libgcc-${GCC_VER}-dev:i386" || true
+          else
+            # Try generic libstdc++ dev package name
+            if apt-cache policy libstdc++-dev:i386 | grep -q 'Candidate:'; then
+              sudo apt-get install -y --no-install-recommends libstdc++-dev:i386 || true
+            else
+              echo "libstdc++-dev:i386 not available from apt; continuing without it"
+            fi
+          fi
+      
+          # Try libc++ packages if available (not always present on Ubuntu apt for i386)
+          if apt-cache policy libc++-dev:i386 | grep -q 'Candidate:'; then
+            sudo apt-get install -y --no-install-recommends libc++-dev:i386 libc++abi-dev:i386 || true
+          else
+            echo "libc++-dev:i386 not available; relying on libstdc++ for C++ headers"
+          fi
+      
+          # Install cmake from apt only if its deps are satisfiable; otherwise install pip meson and use preinstalled cmake
+          if apt-cache policy cmake | grep -q 'Candidate:'; then
+            sudo apt-get install -y --no-install-recommends cmake || true
+          else
+            echo "cmake candidate not available; skipping apt cmake install"
+          fi
+      
+          # Ensure meson is available (user pip install)
           pip3 install --user meson
-          # Ensure meson is on PATH for the session
           export PATH="$HOME/.local/bin:$PATH"
           meson --version || true
+
   
       - name: Checkout repository
         uses: actions/checkout@v5
