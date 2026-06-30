@@ -9,10 +9,9 @@ cmake = 'cmake'
 ld = '/usr/bin/i686-linux-gnu-ld'
 
 [built-in options]
-# Force a C and C++ standard the cross compiler understands
 c_args = ['-m32']
-cpp_args = ['-m32', '-std=gnu++17']
 c_link_args = ['-m32']
+cpp_args = ['-m32', '-std=gnu++17']
 cpp_link_args = ['-m32']
 cpp_std = 'gnu++17'
 
