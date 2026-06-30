@@ -117,12 +117,12 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
-      
+  
           # Repair apt state and refresh lists
           sudo apt-get -y --fix-broken install || true
           sudo apt-get update
-      
-          # Add target architecture and ports repos only for non-amd64 cross targets
+  
+          # Add target architecture and ports repos only for non-amd64 non-i386 targets
           if [ "${{ matrix.arch_debian }}" != "amd64" ] && [ "${{ matrix.arch_debian }}" != "i386" ]; then
             sudo sed -i "s/^deb /deb [arch=amd64] /g" /etc/apt/sources.list || true
             echo "deb [arch=${{ matrix.arch_debian }}] http://ports.ubuntu.com/ jammy main restricted" | sudo tee -a /etc/apt/sources.list
@@ -142,34 +142,35 @@ jobs:
               sudo apt-get update
             fi
           fi
-      
+  
           # Core build tools
           sudo apt-get install -y --no-install-recommends \
             git diffutils ruby bison ccache make cmake ninja-build python3-pip || true
-      
+  
           # Install meson via pip (user) and ensure it's on PATH
           pip3 install --user meson
           export PATH="$HOME/.local/bin:$PATH"
           meson --version || true
-      
+  
           # Native compilers
           sudo apt-get install -y --no-install-recommends gcc g++ || true
-      
-          # Install cross compilers for the matrix arch (i686-linux-gnu for i386)
+  
+          # Install cross compilers for the matrix arch
           sudo apt-get install -y --no-install-recommends gcc-${{ matrix.arch_gcc }} g++-${{ matrix.arch_gcc }} || true
-      
-          # If target is i386, also install multilib support (best-effort)
+  
+          # If target is i386, install i686 cross toolchain and multilib support
           if [ "${{ matrix.arch_mkxpz }}" = "i386" ]; then
-            sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 || true
-            
-            # Install i686 cross toolchain and supporting tools
             sudo apt-get install -y --no-install-recommends \
-              gcc-i686-linux-gnu g++-i686-linux-gnu binutils-multiarch ccache pkg-config || true            
+              gcc-i686-linux-gnu g++-i686-linux-gnu binutils-multiarch pkg-config ccache || true
+            sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib libc6-dev-i386 lib32stdc++6 || true
+  
             # Verify the compiler is available
+            echo "i686 toolchain:"
             which i686-linux-gnu-gcc || true
             i686-linux-gnu-gcc --version || true
+            which i686-linux-gnu-g++ || true
+            i686-linux-gnu-g++ --version || true
           fi
-
   
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -200,13 +201,25 @@ jobs:
           fi
   
           if [ '${{ matrix.arch_mkxpz }}' = 'i386' ]; then
-            meson setup --prefix "$(realpath .)/build/artifact" \
+            # Ensure cross compiler env and flags are visible to Meson and subprojects
+            export PATH="/usr/bin:$PATH"
+            export CC=/usr/bin/i686-linux-gnu-gcc
+            export CXX=/usr/bin/i686-linux-gnu-g++
+            export CFLAGS="-m32 -O2"
+            export CXXFLAGS="-m32 -std=gnu++17 -O2"
+            export LDFLAGS="-m32"
+  
+            rm -rf build
+            meson setup --wipe --reconfigure \
+              --prefix "$(realpath .)/build/artifact" \
               --cross-file linux/meson-i386.txt \
-              --buildtype release -Dstrip=true -Db_lto=false -Dcpp_std=gnu++17 build
+              --buildtype release -Dstrip=true -Db_lto=false -Dcpp_std=gnu++17 build || true
           else
-            meson setup --prefix "$(realpath .)/build/artifact" \
+            rm -rf build
+            meson setup --wipe --reconfigure \
+              --prefix "$(realpath .)/build/artifact" \
               --cross-file linux/meson-${{ matrix.arch_mkxpz }}.txt \
-              -Darm_neon=$arm_neon --buildtype release -Dstrip=true -Db_lto=true build
+              -Darm_neon=$arm_neon --buildtype release -Dstrip=true -Db_lto=true build || true
           fi
   
       - name: Build
@@ -242,24 +255,24 @@ jobs:
           if [ -f build/meson-logs/ninja-log.txt ]; then
             tail -n 200 build/meson-logs/ninja-log.txt || true
           else
-            echo "ninja-log.txt not found; showing ninja -v output from build directory (last 200 lines if available)"
-            # If ninja produced verbose output to stderr, try to show the last commands recorded by ninja
+            echo "ninja-log.txt not found; showing ninja -v dry-run"
             ninja -C build -v -n || true
           fi
           echo "=== Show failing compiler commands (grep for error lines) ==="
-          grep -nE "error:|undefined reference|ld: " build/meson-logs/meson-log.txt || true
+          grep -nE "error:|undefined reference|ld:|unrecognized command-line option|Unknown compiler" build/meson-logs/meson-log.txt || true
           echo "=== End diagnostics ==="
-          # Propagate the original build exit code so CI still fails
           exit $BUILD_EXIT
-
   
       - name: Prepare artifact
+        if: ${{ steps.build.outputs.exit-code == 0 }}
         run: |
           meson install -C build --no-rebuild --tags mkxp-z
   
       - name: Upload artifact
+        if: ${{ steps.build.outputs.exit-code == 0 }}
         uses: actions/upload-artifact@v4
         with:
           name: mkxp-z.linux.ubuntu.22.04.${{ matrix.arch_mkxpz }}.${{ github.event_name == 'pull_request' && format('PR{0}', github.event.number) || github.ref_name }}-${{ steps.short-sha.outputs.sha }}
           path: build/artifact
+
 
